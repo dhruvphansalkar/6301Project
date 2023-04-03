@@ -1,0 +1,15 @@
+<body background="https://i.gifer.com/P85.gif">
+    <h1>input2.html</h1>    
+
+<form action="/decrypt" id="banana2" method="get">
+    <input type="hidden" id="pass" name="password"/>
+    <input type="hidden" id="file" name="file"/>
+</form>
+<script type="text/javascript">
+// var file = prompt("Filename:");
+var passw = prompt("Password to cipher key with:");
+document.getElementById("pass").value=passw;
+document.getElementById("file").value="encrypted.all";
+document.getElementById("banana2").submit();
+</script>
+</body>
