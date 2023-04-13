@@ -12,8 +12,8 @@ from Crypto.Hash import SHA256
 from Crypto.PublicKey import RSA
 from Crypto.Random import random
 from Crypto.Signature import PKCS1_v1_5
-from werkzeug.utils import secure_filename
-import webbrowser
+import hashlib
+
 app = Flask(__name__, static_folder='static', static_url_path='')
 
 signHex = ''
@@ -34,9 +34,9 @@ def sengen():
 	f = open("./static/sender/A_PrivateKey.pem", "wb")
 	f.write(keyPair.exportKey("PEM",password))
 	f.close()
-	f = open("./static/sender/A_PublicKey.der", "wb")
-	#f.write(keyPair.publickey().exportKey())
-	f.write(keyPair.publickey().exportKey('DER'))
+
+	f = open("./static/sender/A_PublicKey.txt", "wb")
+	f.write(keyPair.publickey().exportKey('OpenSSH'))
 	f.close()
 	return redirect('/sengenerated')
 
@@ -47,13 +47,6 @@ def recgen():
 	keyPair = RSA.generate(1024)
 	f = open("./static/receiver/B_PrivateKey.pem", "wb")
 	f.write(keyPair.exportKey("PEM",password))
-	f.close()
-	f = open("./static/receiver/B_PublicKey.pem", "wb")
-	f.write(keyPair.publickey().exportKey('PEM'))
-	f.close()
-
-	f = open("./static/receiver/B_PublicKey.der", "wb")
-	f.write(keyPair.publickey().exportKey('DER'))
 	f.close()
 
 	f = open("./static/receiver/B_PublicKey.txt", "wb")
@@ -71,7 +64,7 @@ def recgend():
 #download sender public key
 @app.route('/dspub')
 def dspub():
-	return send_file('./static/sender/A_PublicKey.pem', as_attachment=True)
+	return send_file('./static/sender/A_PublicKey.txt', as_attachment=True)
 
 #download sender private key
 @app.route('/dspri')
@@ -81,7 +74,7 @@ def dspri():
 #download receiver public key
 @app.route('/drpub')
 def drpub():
-	return send_file('./static/receiver/B_PublicKey.pem', as_attachment=True)
+	return send_file('./static/receiver/B_PublicKey.txt', as_attachment=True)
 
 #download receiver private key
 @app.route('/drpri')
@@ -91,12 +84,12 @@ def drpri():
 #download encrypted file
 @app.route('/downenc')
 def downenc():
-	return send_file('./encrypted.all', as_attachment=True)
+	return send_file(os.path.join(app.config['UPLOAD_FOLDER'], "encrypted.txt.enc"), as_attachment=True)
 
 #download decrypted file
 @app.route('/downdec')
 def downdec():
-	return send_file('./decrypted.txt', as_attachment=True)
+	return send_file(os.path.join(app.config['DOWNLOAD_FOLDER'], "encrypted.txt"), as_attachment=True)
 
 @app.route('/error')
 def error():
@@ -106,29 +99,15 @@ def error():
 def signauth():
 	return render_template('signauth.html')
 
-UPLOAD_FOLDER = "./static/upload"
-app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER 
+app.config['UPLOAD_FOLDER'] = "./static/upload"
+app.config['DOWNLOAD_FOLDER'] = "./static/download" 
+
 @app.route('/')
 def homepage():
 	return render_template("home.html")
 @app.route('/key')
 def banana():
 	return render_template("input.html")
-
-# @app.route('/keys')
-# def inp():
-# 	password = request.args.get('password', 'test')
-# 	keyPair = RSA.generate(1024)
-# 	f = open("./static/priKey.pem", "w")
-# 	f.write(keyPair.exportKey("PEM",password))
-# 	f.close()
-# 	f = open("./static/pubKey.pem", "w")
-# 	f.write(str(keyPair.publickey().exportKey()))
-# 	f.close()
-# 	return redirect('/generated')
-# @app.route('/generated')
-# def inp1():
-# 	return render_template("generated.html")
 	
 ################################################################
 @app.route('/upload/',methods = ['GET','POST'])
@@ -139,8 +118,6 @@ def upload_file():
 			filename = "encrypted.txt"
 			name = os.path.join(app.config['UPLOAD_FOLDER'],filename)
 			file.save(name)
-			#file.save(os.path.join(app.config['UPLOAD_FOLDER'],filename))
-			#f.write(str(keyPair.publickey().exportKey()))
 	return redirect('/key1')
 
 @app.route('/key1')
@@ -158,128 +135,40 @@ def encrypt():
 	priKey = "./static/sender/A_PrivateKey.pem"
 	# Receiver's public key:
 	pubKey = "./static/receiver/B_PublicKey.txt"
-	
-	def sigGenerator(priKey_fname, file, password):
-		# Opening and reading file to encrypt
-		f = open(file, "r")
-		buffer = f.read()
-		f.close()
-		# Creating hash of the file. Using SHA-256 (SHA-512 rose problems)
-		h = SHA256.new(buffer.encode('utf8'))
-		# Reading private key to sign file with
-		keyPair = RSA.importKey(open(priKey_fname, "r").read(), passphrase=password)
-		keySigner = PKCS1_v1_5.new(keyPair)
-		# Saving signature to *.sig file
-		f = open('.' + file.split('.')[1] + ".sig", "w")
-		f.write(str(keySigner.sign(h)))
-		f.close()
-	
-	def keyGenerator(pubKey_fname, file, iv):
-		# Generating 1024 random bits, and creating SHA-256 (for 32 bits compatibility with AES)
-	
-		h = SHA256.new(str(random.getrandbits(1024)).encode('utf-8'))
-	
-		# Reading public key to encrypt AES key with
-	
-		keyPair = RSA.importKey(open(pubKey_fname, "r").read())
-		keyCipher = PKCS1_OAEP.new(keyPair.publickey())
-	
-		# Saving encrypted key to *.key file
-	
-		f = open("." + file.split('.')[1] + ".key", "wb")
-		f.write(iv + keyCipher.encrypt(h.digest()))
-		f.close()	
-		# Returning generated key to encrypt file with
-		return h.digest()
-	
-	
-	def encipher(keyA_fname, keyB_fname, file, password):
-		# Opening file to encrypt in binary reading mode
-	
-		f = open(file, "rb")
-		buffer = f.read()
-		f.close()
-	
-		# Generating file's signature (and saving it)
-		sigGenerator(keyA_fname, file, password)
-	
-		# Generating initializing vector for AES Encryption
+
+	def encrypt_and_sign(file_name, receiver_pub_key_file_name, sender_priv_key_file_name, password):
+	# read file
+		with open(file_name, "rb") as f:
+			file_data = f.read()
+
+		# create signature
+		private_key = RSA.import_key(open(sender_priv_key_file_name).read(), password)
+		h = SHA256.new(file_data)
+		signer = PKCS1_v1_5.new(private_key)
+		signature = signer.sign(h)
+
+		# encrypt file with AES-CFB
 		iv = Random.new().read(AES.block_size)
-	
-		# Generating symmetric key for use (and saving it)
-		k = keyGenerator(keyB_fname, file, iv)
-	
-		# Encrypting and saving result to *.bin file. Using CFB mode
-		keyCipher = AES.new(str(k), AES.MODE_CFB, iv)
-		f = open("." + file.split('.')[1] + ".bin", "wb")
-		f.write(keyCipher.encrypt(buffer))
-		f.close()
-	
-	
-	def auxFilesZip(sig, key, bin):
-		# Opening file to contain all bin, sig and key files
-	
-		f = zipfile.ZipFile(bin.split('.')[0] + ".all", "w")
-	
-		# Writing each of the arguments to the created file
-	
-		f.write(sig)
-		f.write(key)
-		f.write(bin)
-	
-		# Closing the file
-	
-		f.close()
-	
-		# Running clean up to the bin, sig and key files
-	
-		cleanUp(sig, key, bin)
-	
-	
-	def cleanUp(sig, key, bin):
-		# Deleting each of the files generated during ciphering
-	
-		os.remove(sig)
-		os.remove(key)
-		os.remove(bin)
-	
-	
-	def checkFiles(file, pubKey, priKey):
-		# Checking for encrypting file's existence and access		
-		if not os.path.isfile(file) or not os.path.isfile(pubKey) or not os.path.isfile(priKey):
-			print("Invalid file to encrypt. Aborting...")
-			return redirect("/error")
-	
-	
-	# # Gathering encrypting file name
-	
-	# if len(sys.argv) > 2:
-	# 	usage()
-	# elif len(sys.argv) == 1:
-	# 	file = file
-	# else:
-	# 	file = sys.argv[1]
-	
-	# # Gathering names of keys
-	
-	# if priKey == "":
-	# 	print("Sender's private key file name:")
-	# 	priKey = raw_input(">>> ")
-	# if pubKey == "":
-	# 	print("Receiver's public key file name:")
-	# 	pubKey = raw_input(">>> ")
-	
-	# Running checks to files
-	
-	checkFiles(file, pubKey, priKey)
-	
-	# Ciphering file (and generating all auxiliary files)
-	
-	encipher(priKey, pubKey, file, password)
-	
-	# Generating output file and clean up
-	
-	auxFilesZip(file.split('.')[0] + ".sig", file.split('.')[0] + ".key", file.split('.')[0] + ".bin")
+		key = hashlib.sha256(Random.new().read(1024)).digest()
+		cipher = AES.new(key, AES.MODE_CFB, iv)
+		enc_data = iv + cipher.encrypt(file_data)
+
+		# encrypt key with RSA-OAEP
+		receiver_pub_key = RSA.import_key(open(receiver_pub_key_file_name).read())
+		cipher_rsa = PKCS1_OAEP.new(receiver_pub_key)
+		enc_key = cipher_rsa.encrypt(key)
+
+		# write encrypted data and signature to file
+		with open(file_name + ".enc", "wb") as f:
+			f.write(enc_data)
+
+		with open(file_name + ".sig", "wb") as f:
+			f.write(signature)
+
+		with open(file_name + ".key", "wb") as f:
+			f.write(enc_key)
+
+	encrypt_and_sign(file, pubKey, priKey, password)
 	return redirect("/generated1")
 
 
@@ -292,6 +181,8 @@ def encrypt():
 def inp2():
 	return render_template("encrypted.html")   
 
+
+
 ########################################################################################
 
 @app.route('/key2')
@@ -302,189 +193,47 @@ def decrypt():
 	# Define public and private key names for faster usage
 	password = request.args.get('password')
 	file = request.args.get('file')
+	down_file = os.path.join(app.config['DOWNLOAD_FOLDER'],file)
+	file = os.path.join(app.config['UPLOAD_FOLDER'],file)
+	
 	# Sender's public key:
-	pubKey = "./static/sender/A_PublicKey.pem"
+	pubKey = "./static/sender/A_PublicKey.txt"
 	# Receiver's private key:
 	priKey = "./static/receiver/B_PrivateKey.pem"
-	
-	
-	
-	def usage():
-		print("python decipher.py <file>")
-		sys.exit(-1)
-	
-	
-	def sigVerification(pubKey_fname, file):
-		global signHex
-		# Generating decrypted file's SHA-256
 
-		h = SHA256.new()
-		h.update(open(file, "r").read())
+	def decrypt_and_verify(file_name, sender_pub_key_file_name, receiver_priv_key_file_name, password):
+    # read encrypted data and signature from file
+		with open(file_name + ".enc", "rb") as f:
+			enc_data = f.read()
 
-		# Reading public key to check signature with
+		with open(file_name + ".sig", "rb") as f:
+			signature = f.read()
 
-		keyPair = RSA.importKey(open(pubKey_fname, "r").read())
-		keyVerifier = PKCS1_v1_5.new(keyPair.publickey())
+		with open(file_name + ".key", "rb") as f:
+			enc_key = f.read()
 
-		# If signature is right, prints SHA-256. Otherwise states that the file is not authentic
+		# decrypt key with RSA-OAEP
+		private_key = RSA.import_key(open(receiver_priv_key_file_name).read(), password)
+		cipher_rsa = PKCS1_OAEP.new(private_key)
+		key = cipher_rsa.decrypt(enc_key)
 
-		if keyVerifier.verify(h, open(file.split('.')[0] + ".sig", "r").read()):
-			# print "The signature is authentic."
-			# print "SHA-256 -> %s" % h.hexdigest()
-			signHex = h.hexdigest()
-			# webbrowser.open_new('http://localhost:5000/signauth')
-			
-		else:
-			# print "The signature is not authentic."
-			return redirect("/error")
-			# webbrowser.open_new('http://localhost:5000/error')
-	
-	
-	def keyReader(privKey_fname, file, password):
-		# Reading private key to decipher symmetric key used
-	
-		keyPair = RSA.importKey(open(privKey_fname, "r").read(), passphrase=password)
-		keyDecipher = PKCS1_OAEP.new(keyPair)
-	
-		# Reading iv and symmetric key used during encryption
-	
-		f = open(file.split('.')[0] + ".key", "r")
-		iv = f.read(16)
-		k = keyDecipher.decrypt(f.read())
-	
-		return k, iv
-	
-	
-	def decipher(keyA_fname, keyB_fname, file, password):
-		# Getting symmetric key used and iv value generated at encryption process
+		# decrypt data with AES-CFB
+		iv = enc_data[:AES.block_size]
+		cipher = AES.new(key, AES.MODE_CFB, iv)
+		file_data = cipher.decrypt(enc_data[AES.block_size:])
 
-		k, iv = keyReader(keyB_fname, file, password)
+		# verify signature
+		public_key = RSA.import_key(open(sender_pub_key_file_name).read())
+		h = SHA256.new(file_data)
+		verifier = PKCS1_v1_5.new(public_key)
+		if not verifier.verify(h, signature):
+			raise ValueError("Invalid signature")
 
-		# Deciphering the initial information and saving it to file with no extension
+		# write decrypted data to file
+		with open(down_file, "wb") as f:
+			f.write(file_data)
 
-
-		keyDecipher = AES.new(k, AES.MODE_CFB, iv)
-		bin = open("./encrypted.bin", "rb").read()
-		f = open("./decrypted.txt", "wb")
-		f.write(keyDecipher.decrypt(bin))
-		f.close()
-
-		# Running a Signature verification
-
-		sigVerification(keyA_fname, file.split('.')[0]+".txt")
-	
-	
-	def auxFilesUnzip(all):
-		# Opening the input file
-	
-		f = zipfile.ZipFile(all + ".all", "r")
-	
-		# Extracting all of its files
-	
-		f.extractall()
-	
-	
-	def cleanUp(sig, key, bin, all):
-		# Removing all of the files created, except for the final deciphered file
-	
-		os.remove(sig)
-		os.remove(key)
-		os.remove(bin)
-		os.remove(all)
-	
-	
-	def checkFiles(file, pubKey, priKey, first_run):
-		# Checking for decrypting file's existence and access, keys, aux and output files
-	
-		if first_run:
-			# Checking for decrypting file's existence and access
-	
-			if not os.path.isfile(file + ".all") or not os.access(file + ".all", os.R_OK):
-				# print "Invalid file to decrypt. Aborting..."
-				redirect("/error")
-				# sys.exit(1)
-	
-			# Checking for public key's existence and access
-	
-			if not os.path.isfile(pubKey) or not os.access(pubKey, os.R_OK):
-				# print "Invalid public key file. Aborting..."
-				redirect("/error")
-				# sys.exit(6)
-	
-			# Checking for private key's existence and access
-	
-			if not os.path.isfile(priKey) or not os.access(priKey, os.R_OK):
-				# print "Invalid private key file. Aborting..."
-				redirect("/error")
-				# sys.exit(7)
-	
-		elif not first_run:
-			# Checking if all of the necessary files exist and are accessible
-	
-			if not os.path.isfile(file + ".sig") or not os.access(file + ".sig", os.R_OK):
-				# print "Invalid *.sig file. Aborting..."
-				redirect("/error")
-				# sys.exit(2)
-			if not os.path.isfile(file + ".key") or not os.access(file + ".key", os.R_OK):
-				# print "Invalid *.key file. Aborting..."
-				redirect("/error")
-				# sys.exit(3)
-			if not os.path.isfile(file + ".bin") or not os.access(file + ".bin", os.R_OK):
-				# print "Invalid *.bin file. Aborting..."
-				redirect("/error")
-				# sys.exit(4)
-	
-			# Checking if in case of output file's existence, it is writable
-	
-			if os.path.isfile(file) and not os.access(file, os.W_OK):
-				# print "Can't create output file. Aborting..."
-				redirect("/error")
-				# sys.exit(5)
-	
-	
-	# Gathering encrypting file name
-	
-	if len(sys.argv) > 2:
-		usage()
-	elif len(sys.argv) == 1:
-		
-		file = file
-	else:
-		file = sys.argv[1]
-	
-	# Gathering names of keys
-	
-	if pubKey == "":
-		print ("Sender's public key file name:")
-		pubKey = raw_input(">>> ")
-	if priKey == "":
-		print ("Receiver's private key file name:")
-		priKey = raw_input(">>> ")
-	
-	file = file.split('.')[0]
-	
-	# Checking for *.all file and keys' files
-	
-	checkFiles(file, pubKey, priKey, True)
-	print ("Here 1")
-	# Unzipping all files
-	
-	auxFilesUnzip(file)
-	print ("Here 2")
-	# Checking for *.sig, *.key, *.bin files
-	
-	checkFiles(file, pubKey, priKey, False)
-	print ("Here 3")
-	# Reading password if not assigne
-	
-	# Deciphering file
-	
-	
-	decipher(pubKey, priKey, file, password)
-	
-	# Cleaning all files but the deciphered file
-	
-	cleanUp(file + ".sig", file + ".key", file + ".bin", file + ".all")
+	decrypt_and_verify(file, pubKey, priKey, password)
 	return redirect("/generated2")
 
 @app.route('/generated2')
